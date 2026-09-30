@@ -1,5 +1,6 @@
 <meta charset="UTF-8">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 
 
 <style>
@@ -720,23 +721,13 @@
 <div id="modalOverlay">
   <div class="auth-card">
     <button class="auth-close" id="modalClose">✕</button>
-    <div id="setupBlock" style="display:none;">
-      <h1>Admin einrichten</h1>
-      <p class="sub">Einmalig Benutzername &amp; Passwort festlegen.</p>
-      <input type="text" id="setupUser" placeholder="Benutzername" autocomplete="off">
-      <input type="password" id="setupPw1" placeholder="Passwort">
-      <input type="password" id="setupPw2" placeholder="Passwort wiederholen">
-      <button class="auth-btn" id="setupBtn">Speichern &amp; anmelden</button>
-      <div class="auth-error" id="setupError"></div>
-    </div>
-    <div id="loginBlock" style="display:none;">
+    <div id="loginBlock" style="display:block;">
       <h1>Admin-Login</h1>
       <p class="sub">Nur zur Dateneingabe erforderlich.</p>
-      <input type="text" id="loginUser" placeholder="Benutzername" autocomplete="off">
-      <input type="password" id="loginPw" placeholder="Passwort">
+      <input type="email" id="loginUser" placeholder="E-Mail" autocomplete="username">
+      <input type="password" id="loginPw" placeholder="Passwort" autocomplete="current-password">
       <button class="auth-btn" id="loginBtn">Anmelden</button>
       <div class="auth-error" id="loginError"></div>
-      <button class="auth-link" id="resetLink">Zugangsdaten zurücksetzen</button>
     </div>
   </div>
 </div>
@@ -784,15 +775,12 @@
 
 <script>
 (function(){
-  const USER_KEY = 'admin-username';
-  const PW_KEY = 'admin-password';
   const ENTRIES_KEY = 'entries';
   let entries = [];
   let lineRange = 'day';
   let isAdmin = false;
 
   const modalOverlay = document.getElementById('modalOverlay');
-  const setupBlock = document.getElementById('setupBlock');
   const loginBlock = document.getElementById('loginBlock');
   const adminSection = document.getElementById('adminSection');
   const adminBtn = document.getElementById('adminBtn');
@@ -800,27 +788,78 @@
 
   const fmtMoney = (n) => n.toLocaleString('de-DE', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' $';
 
-  // ---------- STORAGE (Claude-Vorschau nutzt window.storage; heruntergeladen/gehostet -> localStorage) ----------
-  async function storageGet(key, shared){
-    try{
-      if(window.storage && window.storage.get) return await window.storage.get(key, shared);
-    }catch(e){}
-    try{
-      const raw = localStorage.getItem('opdorf_'+key);
-      return raw !== null ? { key, value: raw, shared: !!shared } : null;
-    }catch(e){ return null; }
+  // ---------- SUPABASE (zentrale Speicherung) ----------
+  // >>> HIER DEINE WERTE EINTRAGEN (Supabase -> Project Settings -> API) <<<
+  const SUPABASE_URL = 'https://xdfgzzimgxbzojceuwyf.supabase.co';
+  const SUPABASE_ANON_KEY = 'sb_publishable_KzI5wUgleIdpgzKFJavSNQ_cZybCYNJ';   // nur der anon/publishable Key, NIEMALS der service_role Key
+  const TABLE = 'app_data';
+  const CONFIGURED = !SUPABASE_URL.includes('DEIN-PROJEKT') && !SUPABASE_ANON_KEY.includes('DEIN-ANON');
+  const sb = (window.supabase && CONFIGURED) ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+  const loadFailed = {};   // Schutz: wenn Laden fehlschlug, wird NICHT zurückgeschrieben (sonst würden Daten überschrieben)
+
+  function showSyncError(msg){
+    let b = document.getElementById('syncErrorBanner');
+    if(!b){
+      b = document.createElement('div');
+      b.id = 'syncErrorBanner';
+      b.style.cssText = 'position:fixed;left:50%;bottom:20px;transform:translateX(-50%);max-width:90vw;background:#2a1412;border:1px solid var(--red);color:var(--red);padding:10px 16px;border-radius:8px;font-size:13px;z-index:200;text-align:center;';
+      document.body.appendChild(b);
+    }
+    b.textContent = msg;
+    b.style.display = 'block';
+    clearTimeout(b._t);
+    b._t = setTimeout(() => { b.style.display = 'none'; }, 8000);
   }
-  async function storageSet(key, value, shared){
-    try{
-      if(window.storage && window.storage.set) return await window.storage.set(key, value, shared);
-    }catch(e){}
-    try{ localStorage.setItem('opdorf_'+key, value); return { key, value, shared: !!shared }; }catch(e){ return null; }
+
+  async function storageGet(key){
+    if(!sb){
+      loadFailed[key] = true;
+      showSyncError(CONFIGURED ? 'Supabase konnte nicht geladen werden.' : 'Supabase ist noch nicht konfiguriert (URL / Key im Code eintragen).');
+      return null;
+    }
+    const { data, error } = await sb.from(TABLE).select('value').eq('key', key).maybeSingle();
+    if(error){
+      loadFailed[key] = true;
+      showSyncError('Daten konnten nicht geladen werden: ' + error.message);
+      return null;
+    }
+    loadFailed[key] = false;
+    return data ? { key, value: JSON.stringify(data.value) } : null;
   }
-  async function storageDelete(key, shared){
-    try{
-      if(window.storage && window.storage.delete) return await window.storage.delete(key, shared);
-    }catch(e){}
-    try{ localStorage.removeItem('opdorf_'+key); return { key, deleted:true, shared: !!shared }; }catch(e){ return null; }
+  async function storageSet(key, value){
+    if(!sb) return null;
+    if(loadFailed[key]){
+      showSyncError('Speichern gesperrt, weil die Daten vorher nicht geladen werden konnten. Bitte Seite neu laden.');
+      return null;
+    }
+    const { error } = await sb.from(TABLE).upsert({ key, value: JSON.parse(value), updated_at: new Date().toISOString() });
+    if(error){
+      showSyncError('Speichern fehlgeschlagen: ' + error.message);
+      return null;
+    }
+    return { key, value };
+  }
+
+  // Einmalige Übernahme alter Daten aus dem Browser (localStorage) nach Supabase
+  let migrationChecked = false;
+  async function migrateLocalData(){
+    if(migrationChecked || !sb) return;
+    migrationChecked = true;
+    const keys = ['entries','item-images','shop-prices','custom-items','public-flags','item-name-overrides','item-category-overrides'];
+    const pending = [];
+    for(const k of keys){
+      let raw = null;
+      try{ raw = localStorage.getItem('opdorf_'+k); }catch(e){}
+      if(!raw) continue;
+      const remote = await storageGet(k);
+      if(loadFailed[k]) return;
+      if(remote) continue;               // in Supabase existiert schon etwas -> nie überschreiben
+      pending.push([k, raw]);
+    }
+    if(!pending.length) return;
+    if(!confirm('Auf diesem Gerät wurden lokale Shop-Daten gefunden, die noch nicht in Supabase liegen. Jetzt hochladen?')) return;
+    for(const [k, raw] of pending){ await storageSet(k, raw); }
+    location.reload();
   }
   const todayStr = () => toLocalYMD(new Date());
 
@@ -1439,74 +1478,30 @@
   document.getElementById('modalClose').addEventListener('click', closeModal);
   modalOverlay.addEventListener('click', (e) => { if(e.target === modalOverlay) closeModal(); });
 
-  async function initAuthBlocks(){
-    let storedUser = null;
-    try{ const r = await storageGet(USER_KEY, false); storedUser = r ? r.value : null; }catch(e){}
-    if(!storedUser){
-      setupBlock.style.display = 'block';
-      loginBlock.style.display = 'none';
-    } else {
-      setupBlock.style.display = 'none';
-      loginBlock.style.display = 'block';
-    }
+  function initAuthBlocks(){
+    document.getElementById('loginError').textContent = '';
   }
 
-  document.getElementById('setupBtn').addEventListener('click', async () => {
-    const u = document.getElementById('setupUser').value.trim();
-    const p1 = document.getElementById('setupPw1').value;
-    const p2 = document.getElementById('setupPw2').value;
-    const err = document.getElementById('setupError');
-    if(!u){ err.textContent = 'Bitte Benutzernamen eingeben.'; return; }
-    if(!p1 || p1.length < 3){ err.textContent = 'Passwort: mindestens 3 Zeichen.'; return; }
-    if(p1 !== p2){ err.textContent = 'Passwörter stimmen nicht überein.'; return; }
-    err.textContent = '';
-    try{
-      await storageSet(USER_KEY, u, false);
-      await storageSet(PW_KEY, p1, false);
-    }catch(e){}
-    grantAdmin();
-  });
-
   document.getElementById('loginBtn').addEventListener('click', async () => {
-    const u = document.getElementById('loginUser').value.trim();
-    const p = document.getElementById('loginPw').value;
+    const email = document.getElementById('loginUser').value.trim();
+    const pw = document.getElementById('loginPw').value;
     const err = document.getElementById('loginError');
-    let storedUser = null, storedPw = null;
-    try{
-      const ru = await storageGet(USER_KEY, false); storedUser = ru ? ru.value : null;
-      const rp = await storageGet(PW_KEY, false); storedPw = rp ? rp.value : null;
-    }catch(e){}
-    if(u && p && u === storedUser && p === storedPw){ err.textContent = ''; grantAdmin(); }
-    else { err.textContent = 'Benutzername oder Passwort falsch.'; }
+    if(!email || !pw){ err.textContent = 'Bitte E-Mail und Passwort eingeben.'; return; }
+    if(!sb){ err.textContent = CONFIGURED ? 'Supabase konnte nicht geladen werden.' : 'Supabase ist noch nicht konfiguriert.'; return; }
+    const btn = document.getElementById('loginBtn');
+    btn.disabled = true;
+    const { error } = await sb.auth.signInWithPassword({ email, password: pw });
+    btn.disabled = false;
+    if(error){ err.textContent = 'E-Mail oder Passwort falsch.'; return; }
+    err.textContent = '';
+    document.getElementById('loginPw').value = '';
+    grantAdmin();
   });
 
   ['loginUser','loginPw'].forEach(id => {
     document.getElementById(id).addEventListener('keydown', (e) => {
       if(e.key === 'Enter') document.getElementById('loginBtn').click();
     });
-  });
-
-  document.getElementById('resetLink').addEventListener('click', async () => {
-    const err = document.getElementById('loginError');
-    const enteredPw = document.getElementById('loginPw').value;
-    if(!enteredPw){
-      err.textContent = 'Bitte zuerst dein aktuelles Passwort oben eingeben, dann erneut klicken.';
-      return;
-    }
-    let storedPw = null;
-    try{ const rp = await storageGet(PW_KEY, false); storedPw = rp ? rp.value : null; }catch(e){}
-    if(enteredPw !== storedPw){
-      err.textContent = 'Falsches Passwort — Zurücksetzen nicht möglich.';
-      return;
-    }
-    if(confirm('Zugangsdaten wirklich zurücksetzen? Du legst danach neue fest.')){
-      try{
-        await storageDelete(USER_KEY, false);
-        await storageDelete(PW_KEY, false);
-      }catch(e){}
-      err.textContent = '';
-      initAuthBlocks();
-    }
   });
 
   function grantAdmin(){
@@ -1521,6 +1516,7 @@
     renderTable();
     if(playerSection.style.display !== 'none') renderPlayerGrid();
     if(typeof itemsSection !== 'undefined' && itemsSection.style.display !== 'none') renderItemsGrid();
+    migrateLocalData();
   }
 
   function logoutAdmin(){
@@ -1532,6 +1528,7 @@
     navItemsBtn.style.display = 'none';
     if(itemsSection.style.display !== 'none') showDashboard(); // Items ist admin-only, bei Logout zurück zum Dashboard
     if(playerSection.style.display !== 'none') renderPlayerGrid();
+    if(sb) sb.auth.signOut();
   }
   document.getElementById('logoutBtn').addEventListener('click', logoutAdmin);
   document.getElementById('drawerLogoutBtn').addEventListener('click', () => { logoutAdmin(); closeDrawer(); });
@@ -1815,6 +1812,12 @@
         </div>
         ${recipeNote}
         ${marketRow}
+        ${it.recipe ? (() => {
+          const rv = computeCurrentRecipeValue(it);
+          return `<div class="market-ref-row" style="border:1px solid rgba(79,143,245,0.3);">
+            <span>Aktueller Rezeptwert: <b>${fmtMoney(rv.totalBuy)}</b> Kauf / <b>${fmtMoney(rv.totalSell)}</b> Verkauf (für ${rv.yieldVal} Stück)</span>
+          </div>`;
+        })() : ''}
         <div class="player-grid-stats">
           <div class="pg-stat">
             <div class="pg-label">Mein Kaufpreis</div>
@@ -2023,6 +2026,18 @@
       return sp[side] / qty;
     }
     return 0;
+  }
+  function computeCurrentRecipeValue(it){
+    if(!it.recipe) return null;
+    const all = buildFullList();
+    let totalBuy = 0, totalSell = 0;
+    it.recipe.ingredients.forEach(ing => {
+      const found = all.find(x=>x.id===ing.id);
+      if(!found) return;
+      totalBuy += ing.qty * priceOf(found, 'buy');
+      totalSell += ing.qty * priceOf(found, 'sell');
+    });
+    return { totalBuy, totalSell, yieldVal: it.recipe.yield };
   }
 
   document.getElementById('addCustomItemBtn').addEventListener('click', () => {
@@ -2367,6 +2382,15 @@
   (async function init(){
     await loadEntries();
     renderPublic();
+    if(sb){
+      try{
+        const { data } = await sb.auth.getSession();
+        if(data && data.session) grantAdmin();   // Admin bleibt nach Reload angemeldet
+      }catch(e){}
+      sb.auth.onAuthStateChange((event) => {
+        if(event === 'SIGNED_OUT' && isAdmin) logoutAdmin();
+      });
+    }
   })();
 })();
 </script>
