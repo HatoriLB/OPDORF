@@ -608,6 +608,10 @@
   .pav-face{display:flex;width:100%;height:100%;align-items:center;justify-content:center;border-radius:inherit;overflow:hidden;}
   .pav-face img{width:100%;height:100%;object-fit:cover;display:block;}
   .pav-del{position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;background:var(--red);border:2px solid var(--card);color:#fff;font-size:9px;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;}
+  .cx-swatch{width:34px;height:34px;border-radius:8px;border:2px solid var(--card-border);cursor:pointer;padding:0;}
+  .cx-swatch:hover{border-color:var(--blue);}
+  .cx-b-aktiv{color:#4ade80;} .cx-b-eingeloest{color:var(--red);}
+  .cx-code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:17px;letter-spacing:1.5px;font-weight:700;}
 </style>
 
 <div class="hero-header">
@@ -637,6 +641,7 @@
     <button class="drawer-item" id="navTableBtn" style="display:none;"><span class="dot"></span>Tabelle</button>
     <button class="drawer-item" id="navCustBtn" style="display:none;"><span class="dot"></span>Kundenkonten</button>
     <button class="drawer-item" id="navOrdAdmBtn" style="display:none;"><span class="dot"></span>Aufträge verwalten</button>
+    <button class="drawer-item" id="navCodesBtn" style="display:none;"><span class="dot"></span>Rabattcodes</button>
     <button class="drawer-item" id="drawerLogoutBtn" style="display:none;">Abmelden</button>
   </div>
 </div>
@@ -720,6 +725,11 @@
     <div id="ordAdminSectionBody"></div>
   </section>
 
+  <section id="codesAdminSection" style="display:none;">
+    <div class="section-title"><h2>Rabattcodes</h2><div class="rule"></div></div>
+    <div id="codesAdminSectionBody"></div>
+  </section>
+
   <section id="playerSection" style="display:none;">
     <div class="section-title">
       <h2>Spielerprofile</h2>
@@ -748,6 +758,7 @@
     <div class="player-search-wrap">
       <input type="text" id="shopSearchInput" placeholder="Item suchen…" autocomplete="off">
     </div>
+    <div id="shopCategoryFilters" class="player-filter-row"></div>
     <div id="shopStatus" class="player-empty" style="display:none;"></div>
     <div id="shopGrid" class="player-grid"></div>
   </section>
@@ -1679,6 +1690,7 @@
     navTableBtn.style.display = 'flex';
     navCustBtn.style.display = 'flex';
     navOrdAdmBtn.style.display = 'flex';
+    navCodesBtn.style.display = 'flex';
     adminBtn.classList.add('is-active');
     adminBtnLabel.textContent = 'Admin aktiv';
     document.getElementById('drawerLogoutBtn').style.display = 'block';
@@ -1692,11 +1704,12 @@
 
   function logoutAdmin(){
     isAdmin = false;
-    const wasOnTable = [adminSection, cxCustSec, cxOrdAdmSec].some(x => x.style.display === 'block');
+    const wasOnTable = [adminSection, cxCustSec, cxOrdAdmSec, cxCodesSec].some(x => x.style.display === 'block');
     adminSection.style.display = 'none';
     navTableBtn.style.display = 'none';
     navCustBtn.style.display = 'none';
     navOrdAdmBtn.style.display = 'none';
+    navCodesBtn.style.display = 'none';
     adminBtn.classList.remove('is-active');
     adminBtnLabel.textContent = 'Admin-Login';
     document.getElementById('drawerLogoutBtn').style.display = 'none';
@@ -1741,8 +1754,9 @@
         navCustBtn = document.getElementById('navCustBtn'), navOrdAdmBtn = document.getElementById('navOrdAdmBtn');
   const cxAccSec = document.getElementById('accountSection'), cxOrdSec = document.getElementById('ordersSection'),
         cxCustSec = document.getElementById('custAdminSection'), cxOrdAdmSec = document.getElementById('ordAdminSection');
-  const allNavBtns = [navDashboardBtn, navShopBtn, navPlayersBtn, navItemsBtn, navTableBtn, navLeaderboardsBtn, navOrdersBtn, navAccountBtn, navCustBtn, navOrdAdmBtn];
-  const allSections = [chartSection, shopSection, playerSection, itemsSection, adminSection, leaderboardSection, cxAccSec, cxOrdSec, cxCustSec, cxOrdAdmSec];
+  const navCodesBtn = document.getElementById('navCodesBtn'), cxCodesSec = document.getElementById('codesAdminSection');
+  const allNavBtns = [navDashboardBtn, navShopBtn, navPlayersBtn, navItemsBtn, navTableBtn, navLeaderboardsBtn, navOrdersBtn, navAccountBtn, navCustBtn, navOrdAdmBtn, navCodesBtn];
+  const allSections = [chartSection, shopSection, playerSection, itemsSection, adminSection, leaderboardSection, cxAccSec, cxOrdSec, cxCustSec, cxOrdAdmSec, cxCodesSec];
   function setNavActive(btn){
     allNavBtns.forEach(b => b.classList.remove('nav-active'));
     btn.classList.add('nav-active');
@@ -2364,6 +2378,7 @@
 
   // ---------- ÖFFENTLICHER SHOP (nur als "sichtbar" markierte Items) ----------
   let shopSearchQuery = '';
+  let shopCategoryFilter = 'all';
   async function loadShopItems(){
     const statusEl = document.getElementById('shopStatus');
     await loadItemExtras();
@@ -2391,7 +2406,17 @@
     const grid = document.getElementById('shopGrid');
     const all = buildFullList();
     const q = shopSearchQuery.trim().toLowerCase();
-    const visible = all.filter(it => publicFlags[it.id] && itemMatchesSearch(it, q));
+    const base = all.filter(it => publicFlags[it.id]);
+    // Kategorien so, wie du sie bei den Items einträgst (ohne die Sammelkategorie "Eigene Items")
+    const cats = Array.from(new Set(base.map(getDisplayCategory).filter(c => c && c !== 'Eigene Items'))).sort((a,b)=>a.localeCompare(b));
+    if(shopCategoryFilter !== 'all' && !cats.includes(shopCategoryFilter)) shopCategoryFilter = 'all';
+    const fbox = document.getElementById('shopCategoryFilters');
+    if(fbox){
+      fbox.style.display = cats.length > 1 ? '' : 'none';
+      fbox.innerHTML = ['all', ...cats].map(c => `<button class="player-filter-btn${c===shopCategoryFilter?' active':''}" data-cat="${String(c).replace(/"/g,'&quot;')}">${c==='all'?'Alle Kategorien':c}</button>`).join('');
+      fbox.querySelectorAll('button').forEach(btn => btn.addEventListener('click', () => { shopCategoryFilter = btn.dataset.cat; renderShopGrid(); }));
+    }
+    const visible = base.filter(it => itemMatchesSearch(it, q) && (shopCategoryFilter === 'all' || getDisplayCategory(it) === shopCategoryFilter));
     if(!visible.length){
       grid.innerHTML = '<div class="player-empty">Aktuell sind keine Items im Shop sichtbar.</div>';
       return;
@@ -2846,9 +2871,10 @@
   const $c = id => document.getElementById(id);
   const cxDate = d => { try{ return new Date(d).toLocaleDateString('de-DE'); }catch(e){ return ''; } };
   const cxBadge = st => `<span class="cx-badge cx-b-${vlogEsc(st)}">${vlogEsc(ST[st]||st)}</span>`;
-  const cxPrice = o => o.price != null
+  const cxPrice0 = o => o.price != null
     ? 'Preis ' + fmtMoney(Number(o.price)) + (o.min_price != null ? ' (Mindestpreis ' + fmtMoney(Number(o.min_price)) + ')' : '')
     : (o.min_price != null ? 'Mindestpreis ' + fmtMoney(Number(o.min_price)) + ' · Endpreis folgt' : 'Preis folgt');
+  const cxPrice = o => cxPrice0(o) + (o.discount_percent > 0 ? ' · Rabatt ' + o.discount_percent + ' %' : '');
 
   async function cxRpc(fn, args){
     if(!sb) throw new Error('Supabase ist nicht konfiguriert.');
@@ -2862,10 +2888,21 @@
   }
   function cxClear(){
     customer = null; try{ localStorage.removeItem(CX_TOKEN); }catch(e){}
+    applyCxTheme(null);
     cxUpdateUI();
     if([cxAccSec, cxOrdSec].some(x => x.style.display === 'block')) { renderAccount(); renderOrders(); }
   }
   const cxToken = () => { try{ return localStorage.getItem(CX_TOKEN) || ''; }catch(e){ return ''; } };
+
+  // Hintergrundfarbe des angemeldeten Kunden (wird in seinem Konto gespeichert)
+  function applyCxTheme(color){
+    if(color && /^#[0-9a-fA-F]{6}$/.test(color)) document.documentElement.style.setProperty('--bg', color);
+    else document.documentElement.style.removeProperty('--bg');
+  }
+  function cxLum(hex){
+    const c = [1,3,5].map(i => parseInt(hex.slice(i, i+2), 16) / 255).map(v => v <= 0.03928 ? v/12.92 : Math.pow((v+0.055)/1.055, 2.4));
+    return 0.2126*c[0] + 0.7152*c[1] + 0.0722*c[2];
+  }
 
   // --- Discord-Link (app_data, key 'discord-link') ---
   let discordUrl = '';
@@ -2891,7 +2928,8 @@
       if(!r || !r.ok){ err.textContent = (r && r.error) || 'Anmeldung fehlgeschlagen.'; }
       else{
         try{ localStorage.setItem(CX_TOKEN, r.token); }catch(e){}
-        customer = { mc_name:r.mc_name, must_change_code:r.must_change_code };
+        customer = { mc_name:r.mc_name, must_change_code:r.must_change_code, theme_bg:r.theme_bg };
+        applyCxTheme(r.theme_bg);
         $c('cxCode').value=''; closeCx(); cxUpdateUI(); showAccount();
       }
     }catch(e){ err.textContent = e.message; }
@@ -2912,7 +2950,7 @@
     if(!t || !sb) return;
     try{
       const me = await cxRpc('customer_me', { p_token:t });
-      if(me){ customer = me; cxUpdateUI(); } else { cxClear(); }
+      if(me){ customer = me; applyCxTheme(me.theme_bg); cxUpdateUI(); } else { cxClear(); }
     }catch(e){}
   }
 
@@ -2949,6 +2987,11 @@
           ${detail('Verkäufe im Detail', sellRows, 'row-purchase', 'Verkauf', 'amount-expense', 'Keine Verkäufe vorhanden.')}
         </div>
       </div>
+      <div class="cx-card"><h3>Hintergrundfarbe</h3><div class="cx-row">
+        ${['#0a0a0d','#0b1220','#0f1a12','#1a0f1f','#1f1010','#14110a'].map(c => `<button class="cx-swatch" data-c="${c}" style="background:${c};" title="${c}"></button>`).join('')}
+        <input type="color" id="cxBgPick" value="${customer.theme_bg || '#0a0a0d'}" style="width:44px;height:36px;border:none;background:none;padding:0;cursor:pointer;">
+        <button class="cx-mini" id="cxBgReset">Zurücksetzen</button></div>
+        <div class="auth-error" id="cxBgMsg"></div></div>
       <div class="cx-card"><h3>Code ändern</h3><div class="cx-row">
         <input class="cx-in" type="password" id="cxOld" placeholder="Aktueller Code" autocomplete="current-password">
         <input class="cx-in" type="password" id="cxNew" placeholder="Neuer Code (min. 6 Zeichen)" autocomplete="new-password">
@@ -2956,6 +2999,18 @@
         <button class="auth-btn" id="cxChangeBtn" style="width:auto;margin:0;">Speichern</button></div>
         <div class="auth-error" id="cxChangeMsg"></div></div>`;
     $c('cxLogoutBtn').addEventListener('click', cxLogout);
+    const setBg = async color => {
+      const msg = $c('cxBgMsg'); msg.style.color = '';
+      if(color && cxLum(color) > 0.35){ msg.textContent = 'Bitte eine dunklere Farbe wählen, sonst ist der Text schlecht lesbar.'; return; }
+      msg.textContent = '';
+      try{
+        await cxRpc('customer_set_theme', { p_token:cxToken(), p_color:color || '' });
+        customer.theme_bg = color || null; applyCxTheme(color); $c('cxBgPick').value = color || '#0a0a0d';
+      }catch(e){ msg.textContent = e.message; }
+    };
+    box.querySelectorAll('.cx-swatch').forEach(b => b.addEventListener('click', () => setBg(b.dataset.c === '#0a0a0d' ? null : b.dataset.c)));
+    $c('cxBgPick').addEventListener('change', e => setBg(e.target.value));
+    $c('cxBgReset').addEventListener('click', () => setBg(null));
     $c('cxChangeBtn').addEventListener('click', async () => {
       const o = $c('cxOld').value, nw = $c('cxNew').value, msg = $c('cxChangeMsg');
       msg.style.color = ''; 
@@ -3023,8 +3078,9 @@
           </div>
           <select class="cx-in" id="ordDk" style="width:130px;" title="Menge in Doppelkisten"><option value="1">1 DK</option></select></div>
         <div class="cx-dim" id="ordMin" style="margin-bottom:8px;">Bitte wähle ein Item aus der Liste.</div>
+        <input class="cx-in" id="ordCode" placeholder="Rabattcode (optional)" maxlength="32" autocomplete="off" style="width:100%;box-sizing:border-box;margin-bottom:8px;text-transform:uppercase;">
         <textarea id="ordDesc" placeholder="Beschreibung / Wünsche (optional)" maxlength="2000"></textarea>
-        <div class="cx-dim" style="margin:8px 0;">Der Endpreis wird nach Prüfung vom Admin festgelegt.</div>
+        <div class="cx-dim" style="margin:8px 0;">Der Rabatt wird beim Erstellen angewendet, jeder Code gilt nur einmal. Der Endpreis wird nach Prüfung vom Admin festgelegt.</div>
         <button class="auth-btn" id="ordCreate" style="width:auto;margin:0;">Auftrag erstellen</button><div class="auth-error" id="ordMsg"></div></div>
       <div class="cx-card"><h3>Meine Aufträge</h3><div id="ordList"><div class="cx-dim">Lade…</div></div></div>${cxPubCard}`;
     renderPubOrders();
@@ -3084,7 +3140,7 @@
       if(!ordSel){ $c('ordMsg').textContent = 'Bitte wähle ein Item aus der Vorschlagsliste.'; return; }
       if(dkMax(ordSel) < 1){ $c('ordMsg').textContent = 'Dieses Item ist aktuell nicht bestellbar.'; return; }
       try{
-        await cxRpc('customer_create_order', { p_token:cxToken(), p_item_id:ordSel.id, p_title:getDisplayName(ordSel), p_description:$c('ordDesc').value, p_dk:dkNow(), p_stack:stackOf(ordSel) });
+        await cxRpc('customer_create_order', { p_token:cxToken(), p_item_id:ordSel.id, p_title:getDisplayName(ordSel), p_description:$c('ordDesc').value, p_dk:dkNow(), p_stack:stackOf(ordSel), p_code:$c('ordCode').value.trim() || null });
         renderOrders();
       }catch(e){ $c('ordMsg').textContent = e.message; cxFail(e); }
     });
@@ -3162,14 +3218,14 @@
   async function renderOrdAdmin(){
     const box = $c('ordAdminSectionBody');
     box.innerHTML = '<div class="cx-card"><div id="oaList"><div class="cx-dim">Lade…</div></div></div>';
-    const { data, error } = await sb.from('orders').select('id,item_id,title,description,quantity,dk,unstacked,status,price,min_price,admin_note,created_at,customers(mc_name)').order('created_at', { ascending:false });
+    const { data, error } = await sb.from('orders').select('id,item_id,title,description,quantity,dk,unstacked,status,price,min_price,discount_percent,discount_code,admin_note,created_at,customers(mc_name)').order('created_at', { ascending:false });
     const list = $c('oaList');
     if(error){ list.textContent = error.message; return; }
     await loadItemExtras();
     list.innerHTML = data.length ? data.map(o => `
       <div class="cx-item cx-flex" data-oid="${vlogEsc(o.id)}" data-st="${vlogEsc(o.status)}" data-dk="${o.dk==null?'':o.dk}" data-un="${o.unstacked?1:0}"><div class="cx-main">
         <div class="cx-sp"><b>${vlogEsc(o.customers ? o.customers.mc_name : '(gelöschtes Konto)')} – ${vlogEsc(o.title)} <span class="cx-dim">${vlogEsc(cxQty(o))}</span></b><span class="cx-dim">${cxDate(o.created_at)}</span></div>
-        <div class="cx-dim" style="margin-top:2px;">Mindestpreis: <b style="color:var(--text);">${o.min_price==null?'—':fmtMoney(Number(o.min_price))}</b></div>
+        <div class="cx-dim" style="margin-top:2px;">Mindestpreis: <b style="color:var(--text);">${o.min_price==null?'—':fmtMoney(Number(o.min_price))}</b>${o.discount_percent>0 ? ` <span class="cx-dim">· inkl. Rabatt ${o.discount_percent} % (Code ${vlogEsc(o.discount_code)})</span>` : ''}</div>
         ${o.description ? `<div class="cx-dim" style="white-space:pre-wrap;margin:4px 0;">${vlogEsc(o.description)}</div>` : ''}
         <div class="cx-row" style="margin-top:8px;">
           ${o.dk != null ? `<label class="cx-dim" style="display:flex;gap:6px;align-items:center;"><input type="number" class="cx-in oa-dk" min="1" step="1" value="${o.dk}" style="width:75px;"> DK</label>
@@ -3201,16 +3257,64 @@
     }));
   }
 
+  // --- Admin: Rabattcodes ---
+  function genCode(){
+    const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789', r = new Uint32Array(8);
+    crypto.getRandomValues(r);
+    const c = Array.from(r, v => A[v % A.length]).join('');
+    return c.slice(0,4) + '-' + c.slice(4);
+  }
+  async function renderCodes(){
+    const box = $c('codesAdminSectionBody');
+    box.innerHTML = `
+      <div class="cx-card"><h3>Neuer Rabattcode</h3><div class="cx-row">
+        <input class="cx-in" id="rcPct" type="number" min="1" max="100" step="1" placeholder="Rabatt in %" style="width:140px;">
+        <button class="auth-btn" id="rcCreate" style="width:auto;margin:0;">Code generieren</button></div>
+        <div class="auth-error" id="rcMsg"></div></div>
+      <div class="cx-card"><h3>Alle Codes</h3><div id="rcList"><div class="cx-dim">Lade…</div></div></div>`;
+    $c('rcCreate').addEventListener('click', async () => {
+      const pct = parseInt($c('rcPct').value, 10), m = $c('rcMsg');
+      if(!(pct >= 1 && pct <= 100)){ m.textContent = 'Bitte einen Rabatt zwischen 1 und 100 % eingeben.'; return; }
+      m.textContent = '';
+      for(let i = 0; i < 3; i++){
+        const { error } = await sb.from('discount_codes').insert({ code: genCode(), percent: pct });
+        if(!error){ renderCodes(); return; }
+        if(error.code !== '23505'){ m.textContent = error.message; return; }   // 23505 = Code existiert schon -> neu würfeln
+      }
+      m.textContent = 'Code konnte nicht erzeugt werden, bitte erneut versuchen.';
+    });
+    const { data, error } = await sb.from('discount_codes').select('id,code,percent,created_at,redeemed_at,customers(mc_name)').order('created_at', { ascending:false });
+    const list = $c('rcList');
+    if(error){ list.textContent = error.message; return; }
+    list.innerHTML = data.length ? data.map(c => `
+      <div class="cx-item">
+        <div class="cx-sp"><span class="cx-code">${vlogEsc(c.code)}</span>
+          <span class="cx-badge ${c.redeemed_at ? 'cx-b-eingeloest' : 'cx-b-aktiv'}">${c.redeemed_at ? 'eingelöst' : 'aktiv'}</span></div>
+        <div class="cx-sp" style="margin-top:6px;"><span class="cx-dim">${c.percent} % Rabatt · erstellt ${cxDate(c.created_at)}${c.redeemed_at ? ` · eingelöst ${cxDate(c.redeemed_at)}${c.customers ? ' von ' + vlogEsc(c.customers.mc_name) : ''}` : ''}</span>
+          <span class="cx-row">${c.redeemed_at ? '' : `<button class="cx-mini" data-copy="${vlogEsc(c.code)}">Kopieren</button><button class="cx-mini cx-danger" data-rcdel="${vlogEsc(c.id)}">Löschen</button>`}</span></div>
+      </div>`).join('') : '<div class="player-empty" style="border:none;">Noch keine Rabattcodes.</div>';
+    list.querySelectorAll('[data-copy]').forEach(b => b.addEventListener('click', async () => {
+      try{ await navigator.clipboard.writeText(b.dataset.copy); b.textContent = '✓ Kopiert'; setTimeout(() => b.textContent = 'Kopieren', 1500); }catch(e){ prompt('Code:', b.dataset.copy); }
+    }));
+    list.querySelectorAll('[data-rcdel]').forEach(b => b.addEventListener('click', async () => {
+      if(!confirm('Diesen Code löschen?')) return;
+      const { error:er } = await sb.from('discount_codes').delete().eq('id', b.dataset.rcdel);
+      if(er) showSyncError(er.message); else renderCodes();
+    }));
+  }
+
   // --- Navigation / Events ---
   function cxShow(sec, btn, fn){ hideAllSections(); sec.style.display = 'block'; setNavActive(btn); closeDrawer(); fn(); }
   function showAccount(){ cxShow(cxAccSec, navAccountBtn, renderAccount); }
   function showOrders(){ cxShow(cxOrdSec, navOrdersBtn, renderOrders); }
   function showCustAdmin(){ if(isAdmin) cxShow(cxCustSec, navCustBtn, renderCustAdmin); }
+  function showCodes(){ if(isAdmin) cxShow(cxCodesSec, navCodesBtn, renderCodes); }
   function showOrdAdmin(){ if(isAdmin) cxShow(cxOrdAdmSec, navOrdAdmBtn, renderOrdAdmin); }
   navAccountBtn.addEventListener('click', showAccount);
   navOrdersBtn.addEventListener('click', showOrders);
   navCustBtn.addEventListener('click', showCustAdmin);
   navOrdAdmBtn.addEventListener('click', showOrdAdmin);
+  navCodesBtn.addEventListener('click', showCodes);
   $c('custLoginBtn').addEventListener('click', () => customer ? showAccount() : openCx());
   $c('cxClose').addEventListener('click', closeCx);
   $c('cxOverlay').addEventListener('click', e => { if(e.target === $c('cxOverlay')) closeCx(); });
